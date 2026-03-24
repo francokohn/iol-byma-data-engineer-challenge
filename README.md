@@ -1,59 +1,126 @@
-# iol-byma-data-engineer-challenge
+# 🏗️ Arquitectura de la solución
 
-El proyecto fue desarrollado utilizando Databricks Community Edition integrado con GitHub para versionado y reproducibilidad del pipeline.
+## 📌 Overview
 
+La solución implementa un pipeline end-to-end sobre datos de operaciones bursátiles, siguiendo una arquitectura **Medallion (Bronze → Silver → Gold)** en **Delta Lake**, con enriquecimiento mediante APIs externas.
 
-## 🏗️ Arquitectura
+Flujo completo:
 
-CSV (Unity Catalog Volume)
-   ↓
-Bronze (Delta Lake)
-   ↓
-Silver (clean + enrichment)
-   ↓
-Gold (modelo dimensional)
-   ↓
-Analytics / BI / APIs
+---
 
-## 🥉 Bronze Layer - Ingesta de datos
+## 🔄 Diagrama de arquitectura
 
-La capa Bronze implementa la ingesta batch del dataset de operaciones BYMA desde un archivo CSV.
+```mermaid
+flowchart LR
 
-### 📥 Origen de datos
-El dataset se carga desde un volumen gestionado en Unity Catalog debido a restricciones del entorno Databricks Community Edition, que impiden el acceso directo al filesystem del workspace.
+    A[CSV Operaciones BYMA] --> B[Bronze Layer<br>Delta Lake]
 
-### ⚙️ Procesamiento
-Se aplicaron las siguientes transformaciones:
-- Definición explícita de schema para evitar inferencias incorrectas
-- Conversión del timestamp desde UTC a zona horaria local (America/Argentina/Buenos_Aires)
-- Generación de columna `fecha_particion` a partir de la fecha local
-- Agregado de columna `_ingested_at` con timestamp de carga
+    B --> C[Silver Layer<br>Enrichment]
 
-### 🔁 Ingesta incremental e idempotencia
+    C --> D[Gold Layer<br>Modelo dimensional]
 
-La ingesta se implementa simulando un proceso batch diario, procesando los datos por `fecha_particion` como si cada día llegara un archivo incremental.
+    D --> E[Business Queries<br>SQL Analytics]
 
-Se utiliza Delta Lake con operaciones `MERGE` sobre `id_transaccion`, lo que garantiza idempotencia: re-ejecutar el pipeline no genera duplicados en la tabla bronze.
+    F[yfinance API]  --> C
+    G[data912 API]  --> C
+    H[API dólar histórico]  --> C
 
-### 🧪 Calidad de datos
-Se implementó un control de duplicados basado en `id_transaccion`.
+    style B fill:#8ecae6,stroke:#023047
+    style C fill:#ffb703,stroke:#fb8500
+    style D fill:#90be6d,stroke:#2d6a4f
 
-- Se genera la tabla `bronze_byma.calidad_duplicados` con registros duplicados detectados
-- En el dataset provisto no se identificaron duplicados, pero la lógica se mantiene para robustez futura
+```
+### 🥉 Bronze Layer – Ingesta
 
-Para garantizar consistencia en la tabla principal, se conserva un único registro por `id_transaccion`, mientras que los duplicados se registran en la tabla de calidad.
+📂 Notebook: 01_ingesta_bronze
 
-### 💾 Persistencia
-- Los datos se almacenan en formato Delta Lake en la tabla: bronze_byma.operaciones_raw
-- Particionada por: fecha_particion
+🔹 Descripción: Se realiza la ingesta del dataset original en formato CSV y se persiste en Delta Lake.
 
-Esto permite mejorar la performance en consultas y simular ingestas batch diarias.
+🔹 Output: bronze_byma.operaciones_raw
+
+🔹 Transformaciones: Definición de schema explícito, conversión de tipos de datos, parseo de timestamps y generación de particiones
+
+🔹 Tecnologías: PySpark y Delta Lake
+
+🔹 Decisiones: Uso de Delta Lake por soporte ACID y escalabilidad. Particionamiento por fecha para optimizar consultas. Evitar inferencia automática de schema
 
 
 
-## ⚙️ Tecnologías utilizadas
 
-- Databricks Community Edition
-- PySpark
-- Delta Lake
-- Unity Catalog Volumes
+### 🥈 Silver Layer – Enrichment
+
+📂 Notebooks: 02_tipo_cambio_enrichment - 03_cotizaciones - 04_cotizaciones_vs_operaciones
+
+🔹 Descripción: Se enriquece la información de operaciones con datos externos: Tipo de cambio diario, Cotizaciones de mercado
+
+
+💱 Tipo de cambio
+
+Tabla: silver_byma.tipo_cambio
+Contiene el valor diario del dólar para conversiones.
+
+
+📈 Cotizaciones
+
+Fuentes utilizadas: yfinance (principal) - data912 (fallback) - argentinadatos (valor dolar)
+
+Estrategia: Primero se intenta con yfinance la cual contiene mayormente las acciones internaciones, para simbolos nacionales se hace una iteración agregando ".BA" al final en la misma api. Si no existe el símbolo → fallback a data912. 
+Trade-off: menor cobertura vs mejor performance
+
+📊 Enriquecimiento
+
+Se calculan métricas clave:
+
+desvio_pct = (precio_operado - precio_mercado) / precio_mercado
+
+🔹 Tecnologías: PySpark - Python (requests)
+🔹 Decisiones clave: Priorizar yfinance por cobertura histórica, usar data912 solo como fallback, evitar múltiples llamadas innecesarias a APIs, Joins por fecha para consistencia temporal
+
+### 🥇 Gold Layer – Modelo analítico
+
+📂 Notebook: 05_modelado_dimensional
+
+🔹 Descripción:Se construye un modelo dimensional orientado a análisis de negocio.
+
+⭐ Fact Table: `fact_operaciones`
+
+Métricas:
+- monto
+- cantidad
+- precio_operado
+- precio_mercado
+- desvío
+  
+📐 Dimensiones:
+   `dim_cliente`
+   `dim_instrumento`
+   `dim_fecha`
+   `dim_canal`
+   
+🔹 Esquema: Star Schema
+✔ Justificación: Mejora performance en queries analíticas, simplifica joins, facilita consumo en BI
+
+
+📊 Capa analítica
+
+📂 Notebook: Business Questions
+
+Ejemplos: Clientes que operan con desvíos > 2% -  Top instrumentos por desvío - Volumen por canal (ARS vs USD) - Evolución Compra vs Venta
+
+⚙️ Stack tecnológico
+
+| Capa          | Tecnología           |
+| ------------- | -------------------- |
+| Storage       | Delta Lake           |
+| Procesamiento | PySpark              |
+| Orquestación  | Databricks Notebooks |
+| APIs          | yfinance, data912    |
+| Lenguaje      | Python + SQL         |
+
+
+### 🚀 Decisiones de diseño
+
+📦 Almacenamiento: Delta Lake - ACID - versionado - operaciones MERGE
+
+📅 Particionamiento: Por year/month/day
+Basado en fecha de operación

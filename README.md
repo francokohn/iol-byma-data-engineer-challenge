@@ -2,9 +2,11 @@
 
 1. Clonar el repositorio:
 ```bash
-git clone https://github.com/tu_usuario/byma-data-engineering.git
+git clone https://github.com/francokohn/iol-byma-data-engineer-challenge.git
 ```
-2. Subir el CSV de ejemplo a tu entorno (Databricks / local)
+2. Antes de ejecutar los notebooks, es necesario contar con el dataset cargado en Databricks File System (DBFS).
+El archivo CSV debe estar disponible en: "dbfs:/Volumes/workspace/default/iol_data/operaciones_byma_2026.csv"
+
 3. Ejecutar notebooks en orden:
 - 01_ingesta_bronze
 - 02_tipo_cambio_enrichment
@@ -15,9 +17,9 @@ git clone https://github.com/tu_usuario/byma-data-engineering.git
 - 07_business_questions
   
 4. Validar tablas generadas:
-- bronze_byma.operaciones_raw
-- silver_byma.tipo_cambio
-- gold_byma.fact_operaciones
+- 🥉 bronze_byma
+- 🥈 silver_byma
+- 🥇 gold_byma
 
 
 ---
